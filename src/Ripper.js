@@ -1,3 +1,14 @@
+// Elementos que la exploración dinámica prueba con "clic y volver". Para el tutorial se limitan a
+// los de Swag Labs; en otra aplicación se usarían selectores más genéricos, como 'a[href="#"], button'.
+const DYNAMIC_SELECTOR = [
+  ".inventory_item_name",
+  ".inventory_item_img a",
+  ".shopping_cart_link",
+  '[data-test="back-to-products"]',
+  '[data-test="checkout"]',
+  '[data-test="continue"]',
+  '[data-test="finish"]',
+].join(", ");
 /**
  * El cartógrafo: navega, cataloga y reporta los estados de la aplicación.
  */
@@ -54,9 +65,20 @@ export class Ripper {
       console.log(`Visitando: ${url}`);
       await this.page.goto(url, { waitUntil: "networkidle" });
 
-      // Extracción estática (enlaces con href)
+      // Fase 1: extracción estática (enlaces con href)
       const staticLinks = await this.extractLinks();
       this.processLinks(url, staticLinks);
+
+      // Fase 2: exploración dinámica, solo en las páginas donde vale la pena
+      const isExplorable =
+        url.includes("inventory.html") ||
+        url.includes("cart.html") ||
+        url.includes("checkout-step-one.html") ||
+        url.includes("checkout-step-two.html");
+
+      if (isExplorable) {
+        await this.exploreDynamicLinks(url);
+      }
     } catch (error) {
       console.error(`Error procesando ${url}: ${error.message}`);
     }
@@ -84,6 +106,49 @@ export class Ripper {
           .filter((value, index, self) => self.indexOf(value) === index)
       );
     }, this.baseUrl);
+  }
+
+  /**
+   * Descubre estados que no aparecen como enlaces: hace clic en cada candidato, observa si la URL
+   * cambió y vuelve atrás (clic y volver).
+   */
+  async exploreDynamicLinks(currentUrl) {
+    console.log("   Iniciando exploración dinámica (clic y volver)...");
+    const total = (await this.page.$$(DYNAMIC_SELECTOR)).length;
+    console.log(
+      `   -> Detectados ${total} elementos interactivos para probar.`,
+    );
+
+    for (let i = 0; i < total; i++) {
+      try {
+        // Se buscan de nuevo en cada vuelta: al volver atrás, la página se reconstruye
+        const element = (await this.page.$$(DYNAMIC_SELECTOR))[i];
+        if (!element) continue;
+
+        await element.click();
+        // Tiempo para que la aplicación reaccione
+        await this.page.waitForTimeout(800);
+
+        const newUrl = this.page.url();
+        if (newUrl !== currentUrl) {
+          console.log(`   ¡Descubrimiento! El clic llevó a: ${newUrl}`);
+          if (!this.visitedUrls.has(newUrl) && !this.queue.includes(newUrl)) {
+            this.queue.push(newUrl);
+            this.addEdge(currentUrl, newUrl);
+          }
+          // Volver para probar el siguiente candidato
+          await this.page.goBack();
+          await this.page.waitForLoadState("domcontentloaded");
+        }
+      } catch (error) {
+        console.log(
+          `   Fallo explorando el elemento ${i}: ${error.message.split("\n")[0]}`,
+        );
+        if (this.page.url() !== currentUrl) {
+          await this.page.goto(currentUrl);
+        }
+      }
+    }
   }
 
   /** Agrega a la cola y al grafo los enlaces que no se conocían. */
