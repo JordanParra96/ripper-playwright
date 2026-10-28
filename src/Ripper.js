@@ -27,6 +27,10 @@ export class Ripper {
     this.adjacencyList = new Map();
     // Límite de seguridad: cantidad máxima de nodos que se visitan
     this.maxNodes = 15;
+    // Anomalías que detecta el oráculo
+    this.errors = [];
+
+    this.setupOracle();
   }
 
   /** Inicia sesión para explorar la zona privada de la aplicación. */
@@ -194,6 +198,48 @@ export class Ripper {
     this.adjacencyList.get(sourceUrl).push(destinationUrl);
   }
 
+  /** El oráculo: escucha la red, la consola y las excepciones durante toda la exploración. */
+  setupOracle() {
+    // Respuestas HTTP con error dentro de la aplicación
+    this.page.on("response", (response) => {
+      const status = response.status();
+      const url = response.url();
+      if (status >= 400 && url.includes(this.baseUrl)) {
+        const errorMsg = `HTTP ${status} en ${url}`;
+        console.error(errorMsg);
+        this.errors.push({
+          type: "HTTP",
+          msg: errorMsg,
+          location: this.page.url(),
+        });
+      }
+    });
+
+    // Errores en la consola del navegador
+    this.page.on("console", (msg) => {
+      if (msg.type() === "error") {
+        const errorMsg = `CONSOLE ERROR: ${msg.text()}`;
+        console.error(errorMsg);
+        this.errors.push({
+          type: "JS",
+          msg: errorMsg,
+          location: this.page.url(),
+        });
+      }
+    });
+
+    // Excepciones no controladas
+    this.page.on("pageerror", (exception) => {
+      const errorMsg = `UNCAUGHT EXCEPTION: ${exception.message}`;
+      console.error(errorMsg);
+      this.errors.push({
+        type: "CRASH",
+        msg: errorMsg,
+        location: this.page.url(),
+      });
+    });
+  }
+
   /** Escribe el grafo en formato Mermaid y el reporte de salud. */
   report() {
     console.log("--- GENERANDO ARTEFACTOS ---");
@@ -214,5 +260,19 @@ export class Ripper {
     fs.writeFileSync(graphPath, mermaidContent);
     console.log(`Grafo generado en: ${graphPath}`);
     console.log(`Total de nodos: ${this.visitedUrls.size}`);
+
+    console.log("\n--- REPORTE DE SALUD ---");
+    if (this.errors.length === 0) {
+      console.log("Sistema saludable: no se detectaron anomalías.");
+    } else {
+      console.log(`Se encontraron ${this.errors.length} anomalías:`);
+      this.errors.forEach((err) => {
+        console.log(`   [${err.type}] en ${err.location} -> ${err.msg}`);
+      });
+      fs.writeFileSync(
+        path.join("ripper_artifacts", "errors.json"),
+        JSON.stringify(this.errors, null, 2),
+      );
+    }
   }
 }
