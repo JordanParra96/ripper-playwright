@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 // Elementos que la exploración dinámica prueba con "clic y volver". Para el tutorial se limitan a
 // los de Swag Labs; en otra aplicación se usarían selectores más genéricos, como 'a[href="#"], button'.
 const DYNAMIC_SELECTOR = [
@@ -56,7 +58,7 @@ export class Ripper {
     this.report();
   }
 
-  /** Visita una URL y descubre sus transiciones. */
+  /** Visita una URL, la fotografía y descubre sus transiciones. */
   async visitAndExtract(url) {
     // Se marca como visitada antes de ir, para no volver a agregarla a la cola
     this.visitedUrls.add(url);
@@ -64,6 +66,14 @@ export class Ripper {
     try {
       console.log(`Visitando: ${url}`);
       await this.page.goto(url, { waitUntil: "networkidle" });
+
+      // Fotografía del estado
+      const nodeId = this.sanitizeNode(url);
+      fs.mkdirSync("ripper_artifacts", { recursive: true });
+      await this.page.screenshot({
+        path: path.join("ripper_artifacts", `${nodeId}.png`),
+        fullPage: true,
+      });
 
       // Fase 1: extracción estática (enlaces con href)
       const staticLinks = await this.extractLinks();
@@ -151,6 +161,21 @@ export class Ripper {
     }
   }
 
+  /** Convierte una URL en un identificador corto: ".../inventory.html" -> "inventory". */
+  sanitizeNode(url) {
+    try {
+      const urlObj = new URL(url);
+      let name = urlObj.pathname.replace("/", "").replace(".html", "");
+      if (name === "" || name === "/") name = "Home";
+      if (urlObj.search) {
+        name += `_${urlObj.searchParams.toString()}`;
+      }
+      return name.replace(/[^a-zA-Z0-9_]/g, "_");
+    } catch {
+      return "Unknown_Node";
+    }
+  }
+
   /** Agrega a la cola y al grafo los enlaces que no se conocían. */
   processLinks(sourceUrl, links) {
     console.log(`   -> Encontrados ${links.length} enlaces estáticos.`);
@@ -169,8 +194,25 @@ export class Ripper {
     this.adjacencyList.get(sourceUrl).push(destinationUrl);
   }
 
+  /** Escribe el grafo en formato Mermaid y el reporte de salud. */
   report() {
-    console.log("--- FIN DE LA EXPLORACIÓN ---");
-    console.log(`Nodos visitados: ${this.visitedUrls.size}`);
+    console.log("--- GENERANDO ARTEFACTOS ---");
+    fs.mkdirSync("ripper_artifacts", { recursive: true });
+
+    let mermaidContent = "graph TD;\n";
+    this.adjacencyList.forEach((destinations, source) => {
+      const sourceId = this.sanitizeNode(source);
+      destinations.forEach((dest) => {
+        const destId = this.sanitizeNode(dest);
+        if (sourceId !== destId) {
+          mermaidContent += `  ${sourceId} --> ${destId};\n`;
+        }
+      });
+    });
+
+    const graphPath = path.join("ripper_artifacts", "graph.mermaid");
+    fs.writeFileSync(graphPath, mermaidContent);
+    console.log(`Grafo generado en: ${graphPath}`);
+    console.log(`Total de nodos: ${this.visitedUrls.size}`);
   }
 }
