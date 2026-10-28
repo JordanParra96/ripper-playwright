@@ -79,6 +79,9 @@ export class Ripper {
         fullPage: true,
       });
 
+      // Llenar los formularios antes de explorar
+      await this.handleForms();
+
       // Fase 1: extracción estática (enlaces con href)
       const staticLinks = await this.extractLinks();
       this.processLinks(url, staticLinks);
@@ -135,6 +138,8 @@ export class Ripper {
 
     for (let i = 0; i < total; i++) {
       try {
+        // Al volver atrás el formulario queda vacío: se llena de nuevo antes de cada clic
+        await this.handleForms();
         // Se buscan de nuevo en cada vuelta: al volver atrás, la página se reconstruye
         const element = (await this.page.$$(DYNAMIC_SELECTOR))[i];
         if (!element) continue;
@@ -162,6 +167,25 @@ export class Ripper {
           await this.page.goto(currentUrl);
         }
       }
+    }
+  }
+
+  /**
+   * Heurística para superar formularios: si la página tiene campos de texto, los llena para poder
+   * avanzar.
+   */
+  async handleForms() {
+    const inputs = await this.page.$$('input[type="text"]');
+    if (inputs.length > 0) {
+      console.log(
+        `   Detectado formulario con ${inputs.length} campos. Llenando...`,
+      );
+      for (const input of inputs) {
+        await input.fill("autobot_data");
+      }
+      // El código postal acepta mejor un valor numérico
+      const zip = await this.page.$('[data-test="postalCode"]');
+      if (zip) await zip.fill("12345");
     }
   }
 
